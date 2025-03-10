@@ -7,7 +7,6 @@ import { createSpinner } from 'nanospinner';
 import simpleGit from 'simple-git';
 import { execSync } from 'child_process';
 import * as XLSX from 'xlsx';
-import fs from 'fs';
 
 async function getUserInputs() {
   const workspace = await input({
@@ -32,18 +31,65 @@ async function getUserInputs() {
   return { workspace, username, appPassword, azureOrg, azureProject, azurePat };
 }
 
+async function fetchBitbucketReposByLoop({ workspace, username, appPassword }) {
+  const spinner = createSpinner('Fetching Bitbucket repositories...').start();
+  let allRepos = [];
+  let url = `https://api.bitbucket.org/2.0/repositories/${workspace}`;
+
+  try {
+    while (url) {
+      const response = await axios.get(url, {
+        auth: { username, password: appPassword },
+      });
+
+      // Store repositories
+      allRepos = allRepos.concat(response.data.values);
+
+      // Check if there is another page
+      url = response.data.next || null;
+    }
+
+    spinner.success({
+      text: `Found ${allRepos.length} repositories.`,
+    });
+
+    return allRepos; // Returning full repository objects, not just slugs
+  } catch (error) {
+    console.error(
+      chalk.red('Failed to fetch repositories:'),
+      error.response?.data || error.message
+    );
+    spinner.error({ text: 'Failed to fetch repositories.' });
+    process.exit(1);
+  }
+}
+
 async function fetchBitbucketRepos({ workspace, username, appPassword }) {
   const spinner = createSpinner('Fetching Bitbucket repositories...').start();
+  let allRepos = [];
+  let url = `https://api.bitbucket.org/2.0/repositories/${workspace}`;
+
   try {
-    const response = await axios.get(
-      `https://api.bitbucket.org/2.0/repositories/${workspace}?pagelen=100`,
-      { auth: { username, password: appPassword } }
-    );
+    do {
+      const response = await axios.get(url, {
+        auth: { username, password: appPassword },
+      });
+
+      allRepos.push(...response.data.values);
+
+      url = response.data.next || null;
+    } while (url);
+
     spinner.success({
-      text: `Found ${response.data.values.length} repositories.`,
+      text: `Found ${allRepos.length} repositories.`,
     });
-    return response.data.values.map((repo) => repo.slug);
+
+    return allRepos;
   } catch (error) {
+    console.error(
+      chalk.red('Failed to fetch repositories:'),
+      error.response?.data || error.message
+    );
     spinner.error({ text: 'Failed to fetch repositories.' });
     process.exit(1);
   }
@@ -172,10 +218,74 @@ async function validateRepositories(credentials) {
   XLSX.writeFile(wb, 'validation_report.xlsx');
 }
 
+async function fetchRepoDetails(repo, { workspace, username, appPassword }) {
+  try {
+    const membersResponse = await axios.get(
+      `https://api.bitbucket.org/2.0/workspaces/${workspace}/permissions/repositories/${repo.slug}`,
+      { auth: { username, password: appPassword } }
+    );
+    const members = membersResponse.data.values.map(
+      (member) => `${member.user.display_name} (${member.permission})`
+    );
+
+    let hasPipeline = 'No';
+    try {
+      const response = await axios.get(
+        `https://api.bitbucket.org/2.0/repositories/${workspace}/${repo.slug}/pipelines/`,
+        { auth: { username, password: appPassword } }
+      );
+      console.log(response.data.values.length);
+      if (response.data.values.length) {
+        hasPipeline = 'Yes';
+      }
+    } catch (pipelineError) {
+      hasPipeline = 'No';
+    }
+
+    return {
+      Repository: repo.slug,
+      Members: members.join(', '),
+      Pipeline: hasPipeline,
+    };
+  } catch (error) {
+    console.error(
+      chalk.red(`❌ Error fetching details for ${repo.slug}: ${error.message}`)
+    );
+    return {
+      Repository: repo.slug,
+      Members: 'Error fetching members',
+      Pipeline: 'Error',
+    };
+  }
+}
+
+async function analyzeBitbucket(credentials) {
+  const repos = await fetchBitbucketRepos(credentials);
+  let report = [];
+
+  const spinner = createSpinner('Analyzing repositories...').start();
+  for (const repo of repos) {
+    const repoDetails = await fetchRepoDetails(repo, credentials);
+    report.push(repoDetails);
+  }
+  spinner.success({ text: 'Analysis completed!' });
+
+  const ws = XLSX.utils.json_to_sheet(report);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Bitbucket Analysis');
+  XLSX.writeFile(wb, 'bitbucket_analysis.xlsx');
+
+  console.log(
+    chalk.green('\n✔ Analysis report saved as bitbucket_analysis.xlsx')
+  );
+}
+
 async function main() {
   const command = process.argv[2];
-  if (!command || (command !== 'migrate' && command !== 'validate')) {
-    console.log(chalk.red('Usage: npx <package-name> migrate | validate'));
+  if (!command || !['migrate', 'validate', 'analyze'].includes(command)) {
+    console.log(
+      chalk.red('Usage: npx <package-name> migrate | validate | analyze')
+    );
     process.exit(1);
   }
 
@@ -184,6 +294,8 @@ async function main() {
     await migrateRepositories(credentials);
   } else if (command === 'validate') {
     await validateRepositories(credentials);
+  } else if (command === 'analyze') {
+    await analyzeBitbucket(credentials);
   }
 }
 
