@@ -8,6 +8,8 @@ import simpleGit from 'simple-git';
 import { execSync } from 'child_process';
 import * as XLSX from 'xlsx';
 
+import { commands } from './config/commands';
+
 async function getUserInputs() {
   const workspace = await input({
     message: 'Enter your Bitbucket workspace:',
@@ -353,7 +355,6 @@ async function analyzeBitbucketProject(credentials) {
 
   spinner.success({ text: '✔ Project analysis completed!' });
 
-  // Generate Excel report
   const ws = XLSX.utils.json_to_sheet(report);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Bitbucket Projects Analysis');
@@ -366,12 +367,7 @@ async function analyzeBitbucketProject(credentials) {
 
 async function main() {
   const command = process.argv[2];
-  if (
-    !command ||
-    !['migrate', 'validate', 'analyze:repo', 'analyze:project'].includes(
-      command
-    )
-  ) {
+  if (!command || !commands.includes(command)) {
     console.log(
       chalk.red(
         'Usage: npx <package-name> migrate | validate | analyze:repo' |

@@ -1,6 +1,6 @@
 {
   "name": "git-bb-ado",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "CLI tool to migrate repositories from Bitbucket to Azure DevOps.",
   "keywords": [
     "git",
