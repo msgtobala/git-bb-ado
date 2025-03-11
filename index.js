@@ -259,7 +259,7 @@ async function fetchRepoDetails(repo, { workspace, username, appPassword }) {
   }
 }
 
-async function analyzeBitbucket(credentials) {
+async function analyzeBitbucketRepo(credentials) {
   const repos = await fetchBitbucketRepos(credentials);
   let report = [];
 
@@ -280,11 +280,103 @@ async function analyzeBitbucket(credentials) {
   );
 }
 
+async function fetchBitbucketProjects({ workspace, username, appPassword }) {
+  try {
+    let allProjects = [];
+    let url = `https://api.bitbucket.org/2.0/workspaces/${workspace}/projects`;
+
+    while (url) {
+      const response = await axios.get(url, {
+        auth: { username, password: appPassword },
+      });
+
+      allProjects = allProjects.concat(response.data.values);
+      url = response.data.next || null;
+    }
+
+    return allProjects;
+  } catch (error) {
+    console.error(chalk.red('❌ Failed to fetch projects:', error.message));
+    return [];
+  }
+}
+
+async function fetchRepoCountForProject(
+  project,
+  { workspace, username, appPassword }
+) {
+  try {
+    let repoCount = 0;
+    let url = `https://api.bitbucket.org/2.0/repositories/${workspace}?q=project.key="${project.key}"`;
+
+    while (url) {
+      const response = await axios.get(url, {
+        auth: { username, password: appPassword },
+      });
+
+      repoCount += response.data.values.length;
+      url = response.data.next || null;
+    }
+
+    return repoCount;
+  } catch (error) {
+    console.error(
+      chalk.red(
+        `❌ Error fetching repos for project ${project.key}: ${error.message}`
+      )
+    );
+    return 0;
+  }
+}
+
+async function analyzeBitbucketProject(credentials) {
+  console.log(chalk.blue('🔍 Analyzing Bitbucket projects...'));
+
+  const projects = await fetchBitbucketProjects(credentials);
+  if (projects.length === 0) {
+    console.log(chalk.yellow('⚠ No projects found in the workspace.'));
+    return;
+  }
+
+  const spinner = createSpinner('Fetching repository counts...').start();
+  let report = [];
+
+  for (const project of projects) {
+    const repoCount = await fetchRepoCountForProject(project, credentials);
+
+    report.push({
+      ProjectName: project.name,
+      ProjectCode: project.key,
+      RepoCount: repoCount,
+    });
+  }
+
+  spinner.success({ text: '✔ Project analysis completed!' });
+
+  // Generate Excel report
+  const ws = XLSX.utils.json_to_sheet(report);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Bitbucket Projects Analysis');
+  XLSX.writeFile(wb, 'bitbucket_projects_analysis.xlsx');
+
+  console.log(
+    chalk.green('\n✔ Analysis report saved as bitbucket_projects_analysis.xlsx')
+  );
+}
+
 async function main() {
   const command = process.argv[2];
-  if (!command || !['migrate', 'validate', 'analyze'].includes(command)) {
+  if (
+    !command ||
+    !['migrate', 'validate', 'analyze:repo', 'analyze:project'].includes(
+      command
+    )
+  ) {
     console.log(
-      chalk.red('Usage: npx <package-name> migrate | validate | analyze')
+      chalk.red(
+        'Usage: npx <package-name> migrate | validate | analyze:repo' |
+          'analyze:project'
+      )
     );
     process.exit(1);
   }
@@ -294,8 +386,10 @@ async function main() {
     await migrateRepositories(credentials);
   } else if (command === 'validate') {
     await validateRepositories(credentials);
-  } else if (command === 'analyze') {
-    await analyzeBitbucket(credentials);
+  } else if (command === 'analyze:repo') {
+    await analyzeBitbucketRepo(credentials);
+  } else if (command === 'analyze:project') {
+    await analyzeBitbucketProject(credentials);
   }
 }
 
