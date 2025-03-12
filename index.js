@@ -8,27 +8,36 @@ import simpleGit from 'simple-git';
 import { execSync } from 'child_process';
 import * as XLSX from 'xlsx';
 
-import { commands } from './config/commands';
+import { commands } from './config/commands.js';
 
-async function getUserInputs() {
-  const workspace = await input({
+async function getUserInputs(onlybitbucket) {
+  let workspace = '',
+    username = '',
+    appPassword = '',
+    azureOrg = '',
+    azureProject = '',
+    azurePat = '';
+  workspace = await input({
     message: 'Enter your Bitbucket workspace:',
   });
-  const username = await input({
+  username = await input({
     message: 'Enter your Bitbucket username:',
   });
-  const appPassword = await password({
+  appPassword = await password({
     message: 'Enter your Bitbucket app password:',
   });
-  const azureOrg = await input({
-    message: 'Enter your Azure DevOps organization URL:',
-  });
-  const azureProject = await input({
-    message: 'Enter your Azure DevOps project name:',
-  });
-  const azurePat = await password({
-    message: 'Enter your Azure DevOps PAT:',
-  });
+
+  if (!onlybitbucket) {
+    azureOrg = await input({
+      message: 'Enter your Azure DevOps organization URL:',
+    });
+    azureProject = await input({
+      message: 'Enter your Azure DevOps project name:',
+    });
+    azurePat = await password({
+      message: 'Enter your Azure DevOps PAT:',
+    });
+  }
 
   return { workspace, username, appPassword, azureOrg, azureProject, azurePat };
 }
@@ -316,6 +325,10 @@ async function fetchRepoCountForProject(
         auth: { username, password: appPassword },
       });
 
+      if(repoCount === 0) {
+        console.log(response.data);
+      }
+
       repoCount += response.data.values.length;
       url = response.data.next || null;
     }
@@ -336,7 +349,7 @@ async function analyzeBitbucketProject(credentials) {
 
   const projects = await fetchBitbucketProjects(credentials);
   if (projects.length === 0) {
-    console.log(chalk.yellow('⚠ No projects found in the workspace.'));
+    console.log(chalk.yellow('🚨 No projects found in the workspace.'));
     return;
   }
 
@@ -377,14 +390,17 @@ async function main() {
     process.exit(1);
   }
 
-  const credentials = await getUserInputs();
   if (command === 'migrate') {
+    const credentials = await getUserInputs();
     await migrateRepositories(credentials);
   } else if (command === 'validate') {
+    const credentials = await getUserInputs();
     await validateRepositories(credentials);
   } else if (command === 'analyze:repo') {
+    const credentials = await getUserInputs(true);
     await analyzeBitbucketRepo(credentials);
   } else if (command === 'analyze:project') {
+    const credentials = await getUserInputs(true);
     await analyzeBitbucketProject(credentials);
   }
 }
